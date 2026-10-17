@@ -221,6 +221,7 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-pur" onclick="go('pur',this)">&#9632; <span data-t="purchases">Purchases</span></div>
     <div class="ni" id="ni-fin" onclick="go('fin',this)">&#9632; <span data-t="finance">Finance</span></div>
     <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
+    <div class="ni" id="ni-tb" onclick="go('tb',this)">&#9632; <span>ميزان المراجعة</span></div>
     <div class="ni" id="ni-cust" onclick="go('cust',this)">&#9632; <span data-t="customers">Customers</span></div>
     <div class="ni" id="ni-sup" onclick="go('sup',this)">&#9632; <span data-t="suppliers">Suppliers</span></div>
     <div class="ni" id="ni-disp" onclick="go('disp',this)">&#9632; <span data-t="dispatches">Dispatches</span></div>
@@ -1033,6 +1034,10 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   <div id="coa-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
 
+<div class="pg" id="pg-tb">
+  <div id="tb-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-usr">
   <div class="cd" style="padding:0;overflow:hidden;margin-bottom:12px"><div id="usrl"></div></div>
   <button class="btn bs bp" onclick="document.getElementById('auf').style.display='block'">+ <span data-t="newuser">Add user</span></button>
@@ -1273,7 +1278,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1287,6 +1292,7 @@ function go(pg,el){
   if(pg==='pur')loadPur();
   if(pg==='fin'){loadFinStats();finTab('all',document.querySelector('.tab.on')||document.querySelector('.tab'));}
   if(pg==='coa')loadChartOfAccounts();
+  if(pg==='tb')loadTrialBalance();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
   if(pg==='disp'){
@@ -4665,6 +4671,122 @@ function renderCOA(){
   body.innerHTML=html;
 }
 // ── END CHART OF ACCOUNTS ─────────────────────────────────────
+
+// ── TRIAL BALANCE (ميزان المراجعة) ────────────────────────────
+var _tbView='detail'; // detail | grouped
+var _tbFrom='', _tbTo='';
+async function loadTrialBalance(){
+  var body=document.getElementById('tb-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  body.innerHTML='<div style="padding:20px;text-align:center;color:#888">جاري حساب الميزان...</div>';
+  // accounts
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  // journal lines joined to their entry (for date filtering)
+  var q=db.from('fin_journal_lines').select('account_code,debit,credit,fin_journal!inner(entry_date,posted)').eq('fin_journal.posted',true).limit(100000);
+  if(_tbFrom)q=q.gte('fin_journal.entry_date',_tbFrom);
+  if(_tbTo)q=q.lte('fin_journal.entry_date',_tbTo);
+  var lines=[];try{var lr=await q;lines=lr.data||[];}catch(e){lines=[];}
+  // sum per postable account code
+  var sum={}; // code -> {d,c}
+  lines.forEach(function(l){
+    var k=l.account_code;if(!sum[k])sum[k]={d:0,c:0};
+    sum[k].d+=parseFloat(l.debit)||0;sum[k].c+=parseFloat(l.credit)||0;
+  });
+  renderTrialBalance(sum);
+}
+function tbSetView(v){_tbView=v;loadTrialBalance();}
+function tbDateChange(){
+  _tbFrom=document.getElementById('tb-from').value||'';
+  _tbTo=document.getElementById('tb-to').value||'';
+  loadTrialBalance();
+}
+function renderTrialBalance(sum){
+  var body=document.getElementById('tb-body');if(!body)return;
+  var byCode={};COA.forEach(function(a){byCode[a.code]=a;});
+  // For grouped view: roll leaf sums up to every ancestor
+  function ancestors(code){
+    var res=[];var a=byCode[code];
+    while(a&&a.parent_code){res.push(a.parent_code);a=byCode[a.parent_code];}
+    return res;
+  }
+  var rollup={};
+  Object.keys(sum).forEach(function(code){
+    [code].concat(ancestors(code)).forEach(function(c){
+      if(!rollup[c])rollup[c]={d:0,c:0};
+      rollup[c].d+=sum[code].d;rollup[c].c+=sum[code].c;
+    });
+  });
+  var fmt=function(n){n=Math.round((n||0)*100)/100;return n?n.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2}):'—';};
+  var totD=0,totC=0;
+  var rows='';
+  if(_tbView==='detail'){
+    // only postable accounts that have any movement
+    var list=COA.filter(function(a){return a.is_postable&&sum[a.code];});
+    list.sort(function(x,y){return x.code<y.code?-1:1;});
+    if(!list.length){rows='<tr><td colspan="4" style="text-align:center;padding:24px;color:#aaa">لا توجد حركات مسجلة بعد — سيظهر الميزان فور تسجيل أول قيد.</td></tr>';}
+    list.forEach(function(a){
+      var s=sum[a.code];var net=s.d-s.c;
+      // present on the account's normal side
+      var dbal=0,cbal=0;
+      if(a.nature==='debit'){if(net>=0)dbal=net;else cbal=-net;}else{if(net<=0)cbal=-net;else dbal=net;}
+      totD+=dbal;totC+=cbal;
+      rows+='<tr>'
+        +'<td style="padding:8px 10px;font-family:monospace;font-size:12px;color:#999">'+a.code+'</td>'
+        +'<td style="padding:8px 10px">'+a.name+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;font-weight:600;color:#0F6E56">'+fmt(dbal)+'</td>'
+        +'<td style="padding:8px 10px;text-align:center;font-weight:600;color:#A32D2D">'+fmt(cbal)+'</td>'
+      +'</tr>';
+    });
+  }else{
+    // grouped: show tree rows that have movement, indented
+    var roots=COA.filter(function(a){return !a.parent_code;});
+    function walk(a,depth){
+      var r=rollup[a.code];if(!r)return;
+      var net=r.d-r.c;var dbal=0,cbal=0;
+      if(a.nature==='debit'){if(net>=0)dbal=net;else cbal=-net;}else{if(net<=0)cbal=-net;else dbal=net;}
+      var isLeaf=a.is_postable;
+      if(isLeaf){totD+=dbal;totC+=cbal;}
+      var w=a.level<=2?'800':(a.level===3?'700':'500');
+      var bg=a.level===1?'background:#f0f9f4;':(a.level===2?'background:#fafaf8;':'');
+      rows+='<tr style="'+bg+'">'
+        +'<td style="padding:7px 10px;font-family:monospace;font-size:11px;color:#999">'+a.code+'</td>'
+        +'<td style="padding:7px 10px;padding-right:'+(10+depth*18)+'px;font-weight:'+w+'">'+a.name+'</td>'
+        +'<td style="padding:7px 10px;text-align:center;font-weight:'+w+';color:#0F6E56">'+fmt(dbal)+'</td>'
+        +'<td style="padding:7px 10px;text-align:center;font-weight:'+w+';color:#A32D2D">'+fmt(cbal)+'</td>'
+      +'</tr>';
+      coaChildren(a.code).forEach(function(k){walk(k,depth+1);});
+    }
+    roots.forEach(function(r){walk(r,0);});
+    if(!Object.keys(sum).length){rows='<tr><td colspan="4" style="text-align:center;padding:24px;color:#aaa">لا توجد حركات مسجلة بعد — سيظهر الميزان فور تسجيل أول قيد.</td></tr>';}
+  }
+  var balanced=Math.abs(totD-totC)<0.01;
+  var html='<div class="cd" style="padding:20px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">'
+      +'<div><div style="font-size:16px;font-weight:800">⚖️ ميزان المراجعة</div>'
+        +'<div style="font-size:12px;color:#888;margin-top:2px">أرصدة الحسابات المدينة والدائنة</div></div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        +'<span style="font-size:12px;color:#666">من</span><input type="date" id="tb-from" value="'+_tbFrom+'" onchange="tbDateChange()" style="padding:6px 8px;border:1px solid #ddd;border-radius:7px;font-size:12px">'
+        +'<span style="font-size:12px;color:#666">إلى</span><input type="date" id="tb-to" value="'+_tbTo+'" onchange="tbDateChange()" style="padding:6px 8px;border:1px solid #ddd;border-radius:7px;font-size:12px">'
+        +'<button onclick="tbSetView(\'detail\')" style="background:'+(_tbView==='detail'?'#0F6E56':'#eee')+';color:'+(_tbView==='detail'?'#fff':'#555')+';border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">تفصيلي</button>'
+        +'<button onclick="tbSetView(\'grouped\')" style="background:'+(_tbView==='grouped'?'#0F6E56':'#eee')+';color:'+(_tbView==='grouped'?'#fff':'#555')+';border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">مجمّع</button>'
+      +'</div>'
+    +'</div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:520px">'
+      +'<thead><tr style="background:#0F6E56;color:#fff"><th style="padding:9px 10px;text-align:right">الكود</th><th style="padding:9px 10px;text-align:right">الحساب</th><th style="padding:9px 10px">مدين</th><th style="padding:9px 10px">دائن</th></tr></thead>'
+      +'<tbody>'+rows+'</tbody>'
+      +'<tfoot><tr style="background:#f7f6f1;font-weight:800;border-top:2px solid #0F6E56">'
+        +'<td colspan="2" style="padding:10px;text-align:left">الإجمالي</td>'
+        +'<td style="padding:10px;text-align:center;color:#0F6E56">'+fmt(totD)+'</td>'
+        +'<td style="padding:10px;text-align:center;color:#A32D2D">'+fmt(totC)+'</td>'
+      +'</tr></tfoot>'
+    +'</table></div>'
+    +'<div style="margin-top:12px;border-radius:8px;padding:10px 14px;font-size:13px;font-weight:700;'+(balanced?'background:#EAF3DE;color:#0F6E56':'background:#FCEBEB;color:#A32D2D')+'">'
+      +(balanced?'✅ الميزان متوازن (مدين = دائن)':'⚠️ الميزان غير متوازن — الفرق: '+fmt(Math.abs(totD-totC)))
+    +'</div>'
+  +'</div>';
+  body.innerHTML=html;
+}
+// ── END TRIAL BALANCE ─────────────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){

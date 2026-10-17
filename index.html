@@ -220,6 +220,7 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-inv" onclick="go('inv',this)">&#9632; <span data-t="inventory">Inventory</span></div>
     <div class="ni" id="ni-pur" onclick="go('pur',this)">&#9632; <span data-t="purchases">Purchases</span></div>
     <div class="ni" id="ni-fin" onclick="go('fin',this)">&#9632; <span data-t="finance">Finance</span></div>
+    <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
     <div class="ni" id="ni-cust" onclick="go('cust',this)">&#9632; <span data-t="customers">Customers</span></div>
     <div class="ni" id="ni-sup" onclick="go('sup',this)">&#9632; <span data-t="suppliers">Suppliers</span></div>
     <div class="ni" id="ni-disp" onclick="go('disp',this)">&#9632; <span data-t="dispatches">Dispatches</span></div>
@@ -1028,6 +1029,10 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   </div>
 </div>
 
+<div class="pg" id="pg-coa">
+  <div id="coa-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-usr">
   <div class="cd" style="padding:0;overflow:hidden;margin-bottom:12px"><div id="usrl"></div></div>
   <button class="btn bs bp" onclick="document.getElementById('auf').style.display='block'">+ <span data-t="newuser">Add user</span></button>
@@ -1268,7 +1273,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1281,6 +1286,7 @@ function go(pg,el){
   if(pg==='inv')loadInv();
   if(pg==='pur')loadPur();
   if(pg==='fin'){loadFinStats();finTab('all',document.querySelector('.tab.on')||document.querySelector('.tab'));}
+  if(pg==='coa')loadChartOfAccounts();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
   if(pg==='disp'){
@@ -4603,6 +4609,62 @@ function printUsedContract(c){
   var w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}else{toast('اسمح بالنوافذ المنبثقة للطباعة',true);}
 }
 // ── END USED AC ──────────────────────────────────────────────
+
+// ── CHART OF ACCOUNTS (شجرة الحسابات) ──────────────────────────
+var COA=[];var _coaExpanded={};
+function coaCanAccess(){return CU&&['owner','admin','finance'].includes(CU.role);}
+async function loadChartOfAccounts(){
+  var body=document.getElementById('coa-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  body.innerHTML='<div style="padding:20px;text-align:center;color:#888">جاري التحميل...</div>';
+  try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}
+  // default: expand level 1 & 2
+  if(Object.keys(_coaExpanded).length===0){COA.forEach(function(a){if(a.level<=2)_coaExpanded[a.code]=true;});}
+  renderCOA();
+}
+function coaChildren(code){return COA.filter(function(a){return a.parent_code===code;});}
+function coaToggle(code){_coaExpanded[code]=!_coaExpanded[code];renderCOA();}
+function coaExpandAll(v){COA.forEach(function(a){_coaExpanded[a.code]=v;});renderCOA();}
+function renderCOA(){
+  var body=document.getElementById('coa-body');if(!body)return;
+  var roots=COA.filter(function(a){return !a.parent_code;});
+  var typeBadge=function(a){
+    if(a.acct_type==='asset')return '<span style="background:#EAF3DE;color:#0F6E56;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">أصل</span>';
+    return '<span style="background:#FAEEDA;color:#854F0B;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">خصم/حق ملكية</span>';
+  };
+  var rowHtml=function(a,depth){
+    var kids=coaChildren(a.code);
+    var hasKids=kids.length>0;
+    var open=_coaExpanded[a.code];
+    var pad=12+depth*22;
+    var arrow=hasKids?('<span style="display:inline-block;width:16px;color:#888;cursor:pointer">'+(open?'▾':'▸')+'</span>'):'<span style="display:inline-block;width:16px"></span>';
+    var nameWeight=a.level<=2?'800':(a.level===3?'700':'500');
+    var bg=a.level===1?'background:#f0f9f4;':(a.level===2?'background:#fafaf8;':'');
+    var postPill=a.is_postable?'<span style="background:#E3EEF9;color:#185FA5;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700;margin-right:6px">قابل للترحيل</span>':'';
+    var h='<div onclick="'+(hasKids?('coaToggle(\''+a.code+'\')'):'')+'" style="display:flex;align-items:center;gap:8px;padding:8px 12px;padding-right:'+pad+'px;border-bottom:1px solid #f2f1ec;'+bg+(hasKids?'cursor:pointer':'')+'">'
+      +arrow
+      +'<span style="font-family:monospace;font-size:12px;color:#999;min-width:80px">'+a.code+'</span>'
+      +'<span style="flex:1;font-weight:'+nameWeight+';font-size:'+(a.level<=2?'14':'13')+'px">'+a.name+'</span>'
+      +postPill+typeBadge(a)
+    +'</div>';
+    if(hasKids&&open){kids.forEach(function(k){h+=rowHtml(k,depth+1);});}
+    return h;
+  };
+  var html='<div class="cd" style="padding:20px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">'
+      +'<div><div style="font-size:16px;font-weight:800">🌳 شجرة الحسابات</div>'
+        +'<div style="font-size:12px;color:#888;margin-top:2px">دليل الحسابات بنظام الترقيم الهرمي · '+COA.length+' حساب</div></div>'
+      +'<div style="display:flex;gap:8px"><button onclick="coaExpandAll(true)" style="background:#F4EFE2;color:#854F0B;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">توسيع الكل</button>'
+      +'<button onclick="coaExpandAll(false)" style="background:#eee;color:#555;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">طيّ الكل</button></div>'
+    +'</div>'
+    +'<div style="border:1px solid #e8e6e0;border-radius:10px;overflow:hidden">';
+  roots.forEach(function(r){html+=rowHtml(r,0);});
+  html+='</div>'
+    +'<div style="background:#e8f3ee;border-radius:8px;padding:10px 12px;font-size:12px;color:#0a4d3c;margin-top:12px">ℹ️ «قابل للترحيل» = حساب تفصيلي يمكن تسجيل القيود عليه مباشرة. الحسابات الرئيسية تجميعية فقط.</div>'
+  +'</div>';
+  body.innerHTML=html;
+}
+// ── END CHART OF ACCOUNTS ─────────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){

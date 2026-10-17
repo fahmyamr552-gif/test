@@ -223,6 +223,7 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
     <div class="ni" id="ni-jv" onclick="go('jv',this)">&#9632; <span>القيود اليومية</span></div>
     <div class="ni" id="ni-tb" onclick="go('tb',this)">&#9632; <span>ميزان المراجعة</span></div>
+    <div class="ni" id="ni-gl" onclick="go('gl',this)">&#9632; <span>حساب الأستاذ</span></div>
     <div class="ni" id="ni-cust" onclick="go('cust',this)">&#9632; <span data-t="customers">Customers</span></div>
     <div class="ni" id="ni-sup" onclick="go('sup',this)">&#9632; <span data-t="suppliers">Suppliers</span></div>
     <div class="ni" id="ni-disp" onclick="go('disp',this)">&#9632; <span data-t="dispatches">Dispatches</span></div>
@@ -1043,6 +1044,10 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   <div id="tb-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
 
+<div class="pg" id="pg-gl">
+  <div id="gl-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-usr">
   <div class="cd" style="padding:0;overflow:hidden;margin-bottom:12px"><div id="usrl"></div></div>
   <button class="btn bs bp" onclick="document.getElementById('auf').style.display='block'">+ <span data-t="newuser">Add user</span></button>
@@ -1283,7 +1288,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية',gl:'حساب الأستاذ'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1299,6 +1304,7 @@ function go(pg,el){
   if(pg==='coa')loadChartOfAccounts();
   if(pg==='jv')loadJournal();
   if(pg==='tb')loadTrialBalance();
+  if(pg==='gl')loadLedger();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
   if(pg==='disp'){
@@ -4921,6 +4927,100 @@ async function jvOpen(id){
   document.body.insertAdjacentHTML('beforeend',html);
 }
 // ── END JOURNAL ENTRIES ───────────────────────────────────────
+
+// ── GENERAL LEDGER (حساب الأستاذ / كشف حساب) ──────────────────
+var _glCode='', _glFrom='', _glTo='';
+async function loadLedger(){
+  var body=document.getElementById('gl-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  renderLedger();
+  if(_glCode)loadLedgerData();
+}
+function glSelectAccount(code){_glCode=code;loadLedger();}
+function glDateChange(){
+  _glFrom=document.getElementById('gl-from').value||'';
+  _glTo=document.getElementById('gl-to').value||'';
+  loadLedger();
+}
+function renderLedger(innerRows){
+  var body=document.getElementById('gl-body');if(!body)return;
+  var acct=COA.find(function(a){return a.code===_glCode;});
+  var opts='<option value="">— اختر الحساب —</option>';
+  COA.filter(function(a){return a.is_postable;}).forEach(function(a){
+    opts+='<option value="'+a.code+'"'+(_glCode===a.code?' selected':'')+'>'+a.code+' · '+a.name+'</option>';
+  });
+  var inner=innerRows||'<div style="text-align:center;padding:30px;color:#aaa">اختر حساباً لعرض كشف حسابه</div>';
+  var html='<div class="cd" style="padding:20px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:14px">'
+      +'<div style="flex:1;min-width:220px"><div style="font-size:16px;font-weight:800;margin-bottom:6px">📑 حساب الأستاذ</div>'
+        +'<select onchange="glSelectAccount(this.value)" style="width:100%;max-width:360px;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px">'+opts+'</select></div>'
+      +'<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'
+        +'<span style="font-size:12px;color:#666">من</span><input type="date" id="gl-from" value="'+_glFrom+'" onchange="glDateChange()" style="padding:6px 8px;border:1px solid #ddd;border-radius:7px;font-size:12px">'
+        +'<span style="font-size:12px;color:#666">إلى</span><input type="date" id="gl-to" value="'+_glTo+'" onchange="glDateChange()" style="padding:6px 8px;border:1px solid #ddd;border-radius:7px;font-size:12px">'
+        +(_glCode?'<button onclick="printLedger()" style="background:#185FA5;color:#fff;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">🖨 طباعة</button>':'')
+      +'</div>'
+    +'</div>'
+    +(acct?'<div style="background:#f0f9f4;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:12px"><b>'+acct.code+'</b> · '+acct.name+' <span style="color:#888;font-size:11px">('+(acct.nature==='debit'?'طبيعته مدين':'طبيعته دائن')+')</span></div>':'')
+    +'<div id="gl-inner">'+inner+'</div>'
+  +'</div>';
+  body.innerHTML=html;
+}
+async function loadLedgerData(){
+  var inner=document.getElementById('gl-inner');
+  if(inner)inner.innerHTML='<div style="text-align:center;padding:24px;color:#888">جاري التحميل...</div>';
+  var acct=COA.find(function(a){return a.code===_glCode;});if(!acct)return;
+  // all posted lines for this account, with entry date/num/desc
+  var lr=await db.from('fin_journal_lines').select('debit,credit,fin_journal!inner(entry_num,entry_date,description,posted)').eq('account_code',_glCode).eq('fin_journal.posted',true).limit(100000);
+  var rows=(lr.data||[]).map(function(l){var j=l.fin_journal||{};return {date:j.entry_date,num:j.entry_num,desc:j.description,debit:parseFloat(l.debit)||0,credit:parseFloat(l.credit)||0};});
+  rows.sort(function(a,b){if(a.date!==b.date)return a.date<b.date?-1:1;return (a.num||'')<(b.num||'')?-1:1;});
+  var fmt=function(n){n=Math.round((n||0)*100)/100;return n?n.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2}):'—';};
+  // opening balance = sum before _glFrom (signed by nature)
+  var sign=acct.nature==='debit'?1:-1;
+  var opening=0, inD=0, inC=0;
+  rows.forEach(function(r){
+    var before=_glFrom&&r.date<_glFrom;
+    if(before){opening+=sign*(r.debit-r.credit);}
+  });
+  var periodRows=rows.filter(function(r){
+    if(_glFrom&&r.date<_glFrom)return false;
+    if(_glTo&&r.date>_glTo)return false;
+    return true;
+  });
+  var bal=opening;
+  var trHtml='';
+  periodRows.forEach(function(r){
+    bal+=sign*(r.debit-r.credit);inD+=r.debit;inC+=r.credit;
+    var balSide=bal>=0?(acct.nature==='debit'?'مدين':'دائن'):(acct.nature==='debit'?'دائن':'مدين');
+    trHtml+='<tr style="border-bottom:1px solid #f2f1ec">'
+      +'<td style="padding:7px 10px;font-size:12px">'+(r.date||'')+'</td>'
+      +'<td style="padding:7px 10px;font-family:monospace;font-size:11px;color:#185FA5">'+(r.num||'')+'</td>'
+      +'<td style="padding:7px 10px;font-size:12px">'+(r.desc||'')+'</td>'
+      +'<td style="padding:7px 10px;text-align:center;color:#0F6E56">'+(r.debit?fmt(r.debit):'—')+'</td>'
+      +'<td style="padding:7px 10px;text-align:center;color:#A32D2D">'+(r.credit?fmt(r.credit):'—')+'</td>'
+      +'<td style="padding:7px 10px;text-align:center;font-weight:600">'+fmt(Math.abs(bal))+' '+balSide+'</td>'
+    +'</tr>';
+  });
+  var closeSide=bal>=0?(acct.nature==='debit'?'مدين':'دائن'):(acct.nature==='debit'?'دائن':'مدين');
+  var html='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:600px">'
+    +'<thead><tr style="background:#0F6E56;color:#fff"><th style="padding:8px 10px;text-align:right">التاريخ</th><th style="padding:8px 10px;text-align:right">القيد</th><th style="padding:8px 10px;text-align:right">البيان</th><th style="padding:8px 10px">مدين</th><th style="padding:8px 10px">دائن</th><th style="padding:8px 10px">الرصيد</th></tr></thead>'
+    +'<tbody><tr style="background:#faf9f5;font-weight:700"><td style="padding:7px 10px" colspan="5">رصيد افتتاحي</td><td style="padding:7px 10px;text-align:center">'+fmt(Math.abs(opening))+' '+(opening>=0?(acct.nature==='debit'?'مدين':'دائن'):(acct.nature==='debit'?'دائن':'مدين'))+'</td></tr>'+trHtml+'</tbody>'
+    +'<tfoot><tr style="background:#f7f6f1;font-weight:800;border-top:2px solid #0F6E56"><td colspan="3" style="padding:9px 10px;text-align:left">حركة الفترة / الرصيد الختامي</td><td style="padding:9px 10px;text-align:center;color:#0F6E56">'+fmt(inD)+'</td><td style="padding:9px 10px;text-align:center;color:#A32D2D">'+fmt(inC)+'</td><td style="padding:9px 10px;text-align:center">'+fmt(Math.abs(bal))+' '+closeSide+'</td></tr></tfoot>'
+    +'</table></div>';
+  if(!periodRows.length){html='<div style="text-align:center;padding:24px;color:#aaa">لا توجد حركات على هذا الحساب في الفترة المحددة</div>';}
+  var innerEl=document.getElementById('gl-inner');if(innerEl)innerEl.innerHTML=html;
+  window._glPrintData={acct:acct,html:html,from:_glFrom,to:_glTo};
+}
+function printLedger(){
+  var d=window._glPrintData;if(!d){toast('لا يوجد كشف للطباعة',true);return;}
+  var w=window.open('','_blank');if(!w){toast('اسمح بالنوافذ المنبثقة',true);return;}
+  w.document.write('<html dir="rtl"><head><meta charset="utf-8"><title>كشف حساب '+d.acct.code+'</title><style>body{font-family:Arial,Tahoma,sans-serif;padding:24px}table{border-collapse:collapse;width:100%;font-size:12px}th,td{border:1px solid #ccc;padding:6px 8px}th{background:#0F6E56;color:#fff}</style></head><body>'
+    +'<h2 style="color:#0F6E56">برازر كوند — كشف حساب</h2>'
+    +'<div style="margin-bottom:10px"><b>'+d.acct.code+'</b> · '+d.acct.name+(d.from||d.to?(' · الفترة: '+(d.from||'البداية')+' إلى '+(d.to||'اليوم')):'')+'</div>'
+    +d.html+'<script>window.onload=function(){window.print()}<\/script></body></html>');
+  w.document.close();
+}
+// ── END GENERAL LEDGER ────────────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){

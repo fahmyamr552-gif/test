@@ -4823,10 +4823,32 @@ function jvAddLine(){JV_LINES.push({code:'',debit:'',credit:''});renderJournal()
 function jvRemoveLine(i){JV_LINES.splice(i,1);if(JV_LINES.length<2)JV_LINES.push({code:'',debit:'',credit:''});renderJournal();}
 function jvEditLine(i,field,val){
   JV_LINES[i][field]=val;
-  // if typing a debit, clear credit on same line (and vice versa)
-  if(field==='debit'&&val)JV_LINES[i].credit='';
-  if(field==='credit'&&val)JV_LINES[i].debit='';
-  renderJournal();
+  if(field==='code'){renderJournal();return;} // dropdown change can re-render safely
+  // For amount typing: DON'T re-render (would lose focus). Just mirror the opposite field and update totals live.
+  if(field==='debit'){
+    if(val){JV_LINES[i].credit='';var ce=document.getElementById('jv-cr-'+i);if(ce)ce.value='';}
+  }
+  if(field==='credit'){
+    if(val){JV_LINES[i].debit='';var de=document.getElementById('jv-db-'+i);if(de)de.value='';}
+  }
+  jvUpdateTotals();
+}
+function jvUpdateTotals(){
+  var totD=JV_LINES.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var totC=JV_LINES.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  var diff=Math.round((totD-totC)*100)/100;
+  var balanced=Math.abs(diff)<0.01 && totD>0;
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2});};
+  var td=document.getElementById('jv-tot-d');if(td)td.textContent=fmt(totD);
+  var tc=document.getElementById('jv-tot-c');if(tc)tc.textContent=fmt(totC);
+  var ind=document.getElementById('jv-balind');
+  if(ind){
+    ind.textContent=balanced?'✅ متوازن':(totD||totC?'⚠️ غير متوازن — الفرق: '+fmt(Math.abs(diff)):'أدخل سطور القيد');
+    ind.style.background=balanced?'#EAF3DE':((totD||totC)?'#FCEBEB':'#f0f0e8');
+    ind.style.color=balanced?'#0F6E56':((totD||totC)?'#A32D2D':'#888');
+  }
+  var btn=document.getElementById('jv-savebtn');
+  if(btn){btn.disabled=!balanced;btn.style.background=balanced?'#0F6E56':'#ccc';btn.style.cursor=balanced?'pointer':'not-allowed';}
 }
 function renderJournal(){
   var body=document.getElementById('jv-body');if(!body)return;
@@ -4839,8 +4861,8 @@ function renderJournal(){
   var lineRows=JV_LINES.map(function(l,i){
     return '<tr>'
       +'<td style="padding:5px"><select onchange="jvEditLine('+i+',\'code\',this.value)" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:12px">'+jvPostableOptions(l.code)+'</select></td>'
-      +'<td style="padding:5px;width:120px"><input type="number" value="'+(l.debit||'')+'" oninput="jvEditLine('+i+',\'debit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
-      +'<td style="padding:5px;width:120px"><input type="number" value="'+(l.credit||'')+'" oninput="jvEditLine('+i+',\'credit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
+      +'<td style="padding:5px;width:120px"><input id="jv-db-'+i+'" type="number" value="'+(l.debit||'')+'" oninput="jvEditLine('+i+',\'debit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
+      +'<td style="padding:5px;width:120px"><input id="jv-cr-'+i+'" type="number" value="'+(l.credit||'')+'" oninput="jvEditLine('+i+',\'credit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
       +'<td style="padding:5px;width:36px;text-align:center"><span onclick="jvRemoveLine('+i+')" style="color:#ccc;cursor:pointer;font-size:16px">✕</span></td>'
     +'</tr>';
   }).join('');
@@ -4864,13 +4886,13 @@ function renderJournal(){
     +'</div>'
     +'<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f7f6f1"><th style="padding:7px 10px;text-align:right;font-size:12px;color:#666">الحساب</th><th style="padding:7px 10px;font-size:12px;color:#666">مدين</th><th style="padding:7px 10px;font-size:12px;color:#666">دائن</th><th></th></tr></thead>'
       +'<tbody>'+lineRows+'</tbody>'
-      +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td style="padding:8px 10px;text-align:left">الإجمالي</td><td style="padding:8px 10px;text-align:center;color:#0F6E56">'+fmt(totD)+'</td><td style="padding:8px 10px;text-align:center;color:#A32D2D">'+fmt(totC)+'</td><td></td></tr></tfoot>'
+      +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td style="padding:8px 10px;text-align:left">الإجمالي</td><td style="padding:8px 10px;text-align:center;color:#0F6E56"><span id="jv-tot-d">'+fmt(totD)+'</span></td><td style="padding:8px 10px;text-align:center;color:#A32D2D"><span id="jv-tot-c">'+fmt(totC)+'</span></td><td></td></tr></tfoot>'
     +'</table>'
     +'<button onclick="jvAddLine()" style="background:#F4EFE2;color:#854F0B;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;margin-top:10px">+ إضافة سطر</button>'
     +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:10px">'
-      +'<div style="font-size:13px;font-weight:700;border-radius:8px;padding:8px 14px;'+(balanced?'background:#EAF3DE;color:#0F6E56':(totD||totC?'background:#FCEBEB;color:#A32D2D':'background:#f0f0e8;color:#888'))+'">'
+      +'<div id="jv-balind" style="font-size:13px;font-weight:700;border-radius:8px;padding:8px 14px;'+(balanced?'background:#EAF3DE;color:#0F6E56':(totD||totC?'background:#FCEBEB;color:#A32D2D':'background:#f0f0e8;color:#888'))+'">'
         +(balanced?'✅ متوازن':(totD||totC?'⚠️ غير متوازن — الفرق: '+fmt(Math.abs(diff)):'أدخل سطور القيد'))+'</div>'
-      +'<button onclick="jvSave()" '+(balanced?'':'disabled')+' style="background:'+(balanced?'#0F6E56':'#ccc')+';color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:700;cursor:'+(balanced?'pointer':'not-allowed')+'">حفظ القيد</button>'
+      +'<button id="jv-savebtn" onclick="jvSave()" '+(balanced?'':'disabled')+' style="background:'+(balanced?'#0F6E56':'#ccc')+';color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:700;cursor:'+(balanced?'pointer':'not-allowed')+'">حفظ القيد</button>'
     +'</div>'
   +'</div>'
   +'<div class="cd" style="padding:20px">'

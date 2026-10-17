@@ -221,6 +221,7 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-pur" onclick="go('pur',this)">&#9632; <span data-t="purchases">Purchases</span></div>
     <div class="ni" id="ni-fin" onclick="go('fin',this)">&#9632; <span data-t="finance">Finance</span></div>
     <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
+    <div class="ni" id="ni-jv" onclick="go('jv',this)">&#9632; <span>القيود اليومية</span></div>
     <div class="ni" id="ni-tb" onclick="go('tb',this)">&#9632; <span>ميزان المراجعة</span></div>
     <div class="ni" id="ni-cust" onclick="go('cust',this)">&#9632; <span data-t="customers">Customers</span></div>
     <div class="ni" id="ni-sup" onclick="go('sup',this)">&#9632; <span data-t="suppliers">Suppliers</span></div>
@@ -1034,6 +1035,10 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   <div id="coa-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
 
+<div class="pg" id="pg-jv">
+  <div id="jv-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-tb">
   <div id="tb-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
@@ -1278,7 +1283,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1292,6 +1297,7 @@ function go(pg,el){
   if(pg==='pur')loadPur();
   if(pg==='fin'){loadFinStats();finTab('all',document.querySelector('.tab.on')||document.querySelector('.tab'));}
   if(pg==='coa')loadChartOfAccounts();
+  if(pg==='jv')loadJournal();
   if(pg==='tb')loadTrialBalance();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
@@ -4787,6 +4793,134 @@ function renderTrialBalance(sum){
   body.innerHTML=html;
 }
 // ── END TRIAL BALANCE ─────────────────────────────────────────
+
+// ── JOURNAL ENTRIES (القيود اليومية) ──────────────────────────
+var JV_LINES=[]; // working lines for the entry form: {code,debit,credit}
+var JV_LIST=[];  // saved journal entries
+async function loadJournal(){
+  var body=document.getElementById('jv-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  body.innerHTML='<div style="padding:20px;text-align:center;color:#888">جاري التحميل...</div>';
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  try{var jr=await db.from('fin_journal').select('*').eq('posted',true).order('created_at',{ascending:false}).limit(500);JV_LIST=jr.data||[];}catch(e){JV_LIST=[];}
+  if(!JV_LINES.length){JV_LINES=[{code:'',debit:'',credit:''},{code:'',debit:'',credit:''}];}
+  renderJournal();
+}
+function jvPostableOptions(selected){
+  var opts='<option value="">— اختر الحساب —</option>';
+  COA.filter(function(a){return a.is_postable;}).forEach(function(a){
+    opts+='<option value="'+a.code+'"'+(selected===a.code?' selected':'')+'>'+a.code+' · '+a.name+'</option>';
+  });
+  return opts;
+}
+function jvAddLine(){JV_LINES.push({code:'',debit:'',credit:''});renderJournal();}
+function jvRemoveLine(i){JV_LINES.splice(i,1);if(JV_LINES.length<2)JV_LINES.push({code:'',debit:'',credit:''});renderJournal();}
+function jvEditLine(i,field,val){
+  JV_LINES[i][field]=val;
+  // if typing a debit, clear credit on same line (and vice versa)
+  if(field==='debit'&&val)JV_LINES[i].credit='';
+  if(field==='credit'&&val)JV_LINES[i].debit='';
+  renderJournal();
+}
+function renderJournal(){
+  var body=document.getElementById('jv-body');if(!body)return;
+  var totD=JV_LINES.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var totC=JV_LINES.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  var diff=Math.round((totD-totC)*100)/100;
+  var balanced=Math.abs(diff)<0.01 && totD>0;
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2});};
+  var today=(window._jvDate||new Date().toISOString().slice(0,10));
+  var lineRows=JV_LINES.map(function(l,i){
+    return '<tr>'
+      +'<td style="padding:5px"><select onchange="jvEditLine('+i+',\'code\',this.value)" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:12px">'+jvPostableOptions(l.code)+'</select></td>'
+      +'<td style="padding:5px;width:120px"><input type="number" value="'+(l.debit||'')+'" oninput="jvEditLine('+i+',\'debit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
+      +'<td style="padding:5px;width:120px"><input type="number" value="'+(l.credit||'')+'" oninput="jvEditLine('+i+',\'credit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
+      +'<td style="padding:5px;width:36px;text-align:center"><span onclick="jvRemoveLine('+i+')" style="color:#ccc;cursor:pointer;font-size:16px">✕</span></td>'
+    +'</tr>';
+  }).join('');
+  // saved entries list
+  var listRows=JV_LIST.map(function(j){
+    return '<tr style="border-bottom:1px solid #f0efe8">'
+      +'<td style="padding:8px 10px;font-family:monospace;font-size:12px;color:#185FA5;cursor:pointer" onclick="jvOpen(\''+j.id+'\')">'+(j.entry_num||'—')+'</td>'
+      +'<td style="padding:8px 10px;font-size:12px">'+(j.entry_date||'')+'</td>'
+      +'<td style="padding:8px 10px">'+(j.description||'')+'</td>'
+      +'<td style="padding:8px 10px;text-align:center;font-weight:600">'+fmt(j.total_debit)+'</td>'
+      +'<td style="padding:8px 10px;text-align:center">'+(CU&&['owner','admin'].includes(CU.role)?'<span onclick="jvDelete(\''+j.id+'\')" style="color:#ccc;cursor:pointer;font-size:15px">🗑</span>':'')+'</td>'
+    +'</tr>';
+  }).join('')||'<tr><td colspan="5" style="text-align:center;padding:20px;color:#aaa">لا توجد قيود بعد</td></tr>';
+
+  var html='<div class="cd" style="padding:20px;margin-bottom:16px">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">📘 تسجيل قيد يومية</div>'
+    +'<div style="font-size:12px;color:#888;margin-bottom:14px">كل قيد لازم يتوازن: إجمالي المدين = إجمالي الدائن</div>'
+    +'<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<div style="flex:0 0 160px"><label style="font-size:12px;font-weight:700;color:#666">التاريخ</label><input type="date" id="jv-date" value="'+today+'" onchange="window._jvDate=this.value" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
+      +'<div style="flex:1;min-width:200px"><label style="font-size:12px;font-weight:700;color:#666">البيان / الوصف</label><input id="jv-desc" placeholder="وصف القيد" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
+    +'</div>'
+    +'<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f7f6f1"><th style="padding:7px 10px;text-align:right;font-size:12px;color:#666">الحساب</th><th style="padding:7px 10px;font-size:12px;color:#666">مدين</th><th style="padding:7px 10px;font-size:12px;color:#666">دائن</th><th></th></tr></thead>'
+      +'<tbody>'+lineRows+'</tbody>'
+      +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td style="padding:8px 10px;text-align:left">الإجمالي</td><td style="padding:8px 10px;text-align:center;color:#0F6E56">'+fmt(totD)+'</td><td style="padding:8px 10px;text-align:center;color:#A32D2D">'+fmt(totC)+'</td><td></td></tr></tfoot>'
+    +'</table>'
+    +'<button onclick="jvAddLine()" style="background:#F4EFE2;color:#854F0B;border:none;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;margin-top:10px">+ إضافة سطر</button>'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px;flex-wrap:wrap;gap:10px">'
+      +'<div style="font-size:13px;font-weight:700;border-radius:8px;padding:8px 14px;'+(balanced?'background:#EAF3DE;color:#0F6E56':(totD||totC?'background:#FCEBEB;color:#A32D2D':'background:#f0f0e8;color:#888'))+'">'
+        +(balanced?'✅ متوازن':(totD||totC?'⚠️ غير متوازن — الفرق: '+fmt(Math.abs(diff)):'أدخل سطور القيد'))+'</div>'
+      +'<button onclick="jvSave()" '+(balanced?'':'disabled')+' style="background:'+(balanced?'#0F6E56':'#ccc')+';color:#fff;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:700;cursor:'+(balanced?'pointer':'not-allowed')+'">حفظ القيد</button>'
+    +'</div>'
+  +'</div>'
+  +'<div class="cd" style="padding:20px">'
+    +'<div style="font-size:15px;font-weight:800;margin-bottom:12px">القيود المسجّلة <span style="font-size:12px;color:#888;font-weight:400">('+JV_LIST.length+')</span></div>'
+    +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:500px"><thead><tr style="background:#f7f6f1"><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">رقم القيد</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">التاريخ</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">البيان</th><th style="padding:8px 10px;font-size:12px;color:#666">القيمة</th><th></th></tr></thead><tbody>'+listRows+'</tbody></table></div>'
+  +'</div>';
+  body.innerHTML=html;
+}
+async function jvSave(){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  var desc=document.getElementById('jv-desc').value.trim();
+  var date=document.getElementById('jv-date').value||new Date().toISOString().slice(0,10);
+  var lines=JV_LINES.filter(function(l){return l.code&&((parseFloat(l.debit)||0)>0||(parseFloat(l.credit)||0)>0);});
+  if(lines.length<2){toast('القيد يحتاج سطرين على الأقل',true);return;}
+  var totD=lines.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var totC=lines.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  if(Math.abs(totD-totC)>=0.01){toast('القيد غير متوازن',true);return;}
+  // next entry number
+  var lastN=0;JV_LIST.forEach(function(j){var n=parseInt((j.entry_num||'0').replace(/[^0-9]/g,''))||0;if(n>lastN)lastN=n;});
+  var enum_='JV-'+String(lastN+1).padStart(5,'0');
+  var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:desc||null,source:'manual',total_debit:totD,total_credit:totC,created_by:CU.full_name||CU.username}).select().single();
+  if(ins.error){toast('خطأ: '+ins.error.message,true);return;}
+  var payload=lines.map(function(l){return {journal_id:ins.data.id,account_code:l.code,debit:parseFloat(l.debit)||0,credit:parseFloat(l.credit)||0};});
+  var li=await db.from('fin_journal_lines').insert(payload);
+  if(li.error){toast('خطأ في السطور: '+li.error.message,true);return;}
+  toast('تم حفظ القيد '+enum_);
+  JV_LINES=[{code:'',debit:'',credit:''},{code:'',debit:'',credit:''}];window._jvDate='';
+  loadJournal();
+}
+async function jvDelete(id){
+  if(!CU||!['owner','admin'].includes(CU.role)){toast('فقط المالك أو المدير',true);return;}
+  if(!confirm('حذف هذا القيد نهائياً؟'))return;
+  await db.from('fin_journal_lines').delete().eq('journal_id',id);
+  await db.from('fin_journal').delete().eq('id',id);
+  toast('تم الحذف');loadJournal();
+}
+async function jvOpen(id){
+  var j=JV_LIST.find(function(x){return x.id===id;});if(!j)return;
+  var lr=await db.from('fin_journal_lines').select('*').eq('journal_id',id);
+  var byCode={};COA.forEach(function(a){byCode[a.code]=a;});
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString();};
+  var rows=(lr.data||[]).map(function(l){
+    return '<tr><td style="padding:7px 10px;font-family:monospace;font-size:12px;color:#999">'+l.account_code+'</td><td style="padding:7px 10px">'+((byCode[l.account_code]||{}).name||'')+'</td><td style="padding:7px 10px;text-align:center;color:#0F6E56">'+(l.debit>0?fmt(l.debit):'—')+'</td><td style="padding:7px 10px;text-align:center;color:#A32D2D">'+(l.credit>0?fmt(l.credit):'—')+'</td></tr>';
+  }).join('');
+  var ov=document.getElementById('jv-ov');if(ov)ov.remove();
+  var html='<div id="jv-ov" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;padding:22px;max-height:85vh;overflow:auto">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px"><div style="font-size:16px;font-weight:800">قيد '+(j.entry_num||'')+'</div>'
+        +'<button onclick="document.getElementById(\'jv-ov\').remove()" style="background:#eee;border:none;border-radius:8px;width:30px;height:30px;font-size:16px;cursor:pointer">×</button></div>'
+      +'<div style="font-size:12px;color:#888;margin-bottom:14px">'+(j.entry_date||'')+' · '+(j.description||'')+'</div>'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr style="background:#f7f6f1"><th style="padding:7px 10px;text-align:right">الكود</th><th style="padding:7px 10px;text-align:right">الحساب</th><th style="padding:7px 10px">مدين</th><th style="padding:7px 10px">دائن</th></tr></thead><tbody>'+rows+'</tbody>'
+      +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td colspan="2" style="padding:8px 10px;text-align:left">الإجمالي</td><td style="padding:8px 10px;text-align:center;color:#0F6E56">'+fmt(j.total_debit)+'</td><td style="padding:8px 10px;text-align:center;color:#A32D2D">'+fmt(j.total_credit)+'</td></tr></tfoot></table>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+// ── END JOURNAL ENTRIES ───────────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){

@@ -222,6 +222,7 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-fin" onclick="go('fin',this)">&#9632; <span data-t="finance">Finance</span></div>
     <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
     <div class="ni" id="ni-exp" onclick="go('exp',this)">&#9632; <span>تسجيل مصروف</span></div>
+    <div class="ni" id="ni-cp" onclick="go('cp',this)">&#9632; <span>ربط دفعات العملاء</span></div>
     <div class="ni" id="ni-rev" onclick="go('rev',this)">&#9632; <span>مراجعة وترحيل</span></div>
     <div class="ni" id="ni-jv" onclick="go('jv',this)">&#9632; <span>القيود اليومية</span></div>
     <div class="ni" id="ni-tb" onclick="go('tb',this)">&#9632; <span>ميزان المراجعة</span></div>
@@ -1046,6 +1047,10 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   <div id="rev-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
 
+<div class="pg" id="pg-cp">
+  <div id="cp-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-jv">
   <div id="jv-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
@@ -1298,7 +1303,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية',gl:'حساب الأستاذ',exp:'تسجيل مصروف',rev:'مراجعة وترحيل'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية',gl:'حساب الأستاذ',exp:'تسجيل مصروف',rev:'مراجعة وترحيل',cp:'ربط دفعات العملاء'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1317,6 +1322,7 @@ function go(pg,el){
   if(pg==='gl')loadLedger();
   if(pg==='exp')loadExpenseForm();
   if(pg==='rev')loadReviewDrafts();
+  if(pg==='cp')loadCustomerPaymentLink();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
   if(pg==='disp'){
@@ -5057,62 +5063,87 @@ function printLedger(){
 }
 // ── END GENERAL LEDGER ────────────────────────────────────────
 
-// ── EXPENSE ENTRY (تسجيل مصروف) → creates a DRAFT journal entry ──
+// ── EXPENSE ENTRY (تسجيل مصروف) → DRAFT journal entry, multi-line ──
+var EXP_LINES=[]; // [{code,amt}]
 async function loadExpenseForm(){
   var body=document.getElementById('exp-body');if(!body)return;
   if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
   if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
-  // expense accounts (postable, type expense)
-  var expOpts='<option value="">— اختر بند المصروف —</option>';
+  if(!EXP_LINES.length)EXP_LINES=[{code:'',amt:''},{code:'',amt:''}];
+  window._expPay=window._expPay||'131';
+  window._expDate=window._expDate||new Date().toISOString().slice(0,10);
+  renderExpenseForm();
+}
+function expAcctOptions(selected){
+  var o='<option value="">— اختر بند المصروف —</option>';
   COA.filter(function(a){return a.is_postable&&a.acct_type==='expense';}).forEach(function(a){
-    expOpts+='<option value="'+a.code+'">'+a.code+' · '+a.name+'</option>';
+    o+='<option value="'+a.code+'"'+(selected===a.code?' selected':'')+'>'+a.code+' · '+a.name+'</option>';
   });
-  // paid-from: cash (الخزينة 131) + bank accounts (postable, codes under 132) + any postable asset cash-like
+  return o;
+}
+function expAddLine(){EXP_LINES.push({code:'',amt:''});renderExpenseForm();}
+function expRemoveLine(i){EXP_LINES.splice(i,1);if(!EXP_LINES.length)EXP_LINES.push({code:'',amt:''});renderExpenseForm();}
+function expEditLine(i,field,val){
+  EXP_LINES[i][field]=val;
+  if(field==='code'){renderExpenseForm();return;} // dropdown re-render ok
+  expUpdateTotal(); // amount typing: don't re-render (keep focus)
+}
+function expUpdateTotal(){
+  var tot=EXP_LINES.reduce(function(s,l){return s+(parseFloat(l.amt)||0);},0);
+  var el=document.getElementById('exp-total');if(el)el.textContent=(Math.round(tot*100)/100).toLocaleString();
+}
+function renderExpenseForm(){
+  var body=document.getElementById('exp-body');if(!body)return;
   var payOpts='';
   COA.filter(function(a){return a.is_postable&&(a.code==='131'||a.parent_code==='132'||a.code==='133');}).forEach(function(a){
-    payOpts+='<option value="'+a.code+'"'+(a.code==='131'?' selected':'')+'>'+a.name+'</option>';
+    payOpts+='<option value="'+a.code+'"'+(window._expPay===a.code?' selected':'')+'>'+a.name+'</option>';
   });
-  var today=new Date().toISOString().slice(0,10);
-  body.innerHTML='<div class="cd" style="padding:20px;max-width:560px">'
+  var tot=EXP_LINES.reduce(function(s,l){return s+(parseFloat(l.amt)||0);},0);
+  var rows=EXP_LINES.map(function(l,i){
+    return '<tr>'
+      +'<td style="padding:5px"><select onchange="expEditLine('+i+',\'code\',this.value)" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:7px;font-size:12px">'+expAcctOptions(l.code)+'</select></td>'
+      +'<td style="padding:5px;width:130px"><input id="exp-amt-'+i+'" type="number" value="'+(l.amt||'')+'" oninput="expEditLine('+i+',\'amt\',this.value)" placeholder="0" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:7px;font-size:13px;text-align:center"></td>'
+      +'<td style="padding:5px;width:34px;text-align:center"><span onclick="expRemoveLine('+i+')" style="color:#ccc;cursor:pointer;font-size:15px">✕</span></td>'
+    +'</tr>';
+  }).join('');
+  body.innerHTML='<div class="cd" style="padding:20px;max-width:620px">'
     +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">🧾 تسجيل مصروف</div>'
-    +'<div style="font-size:12px;color:#888;margin-bottom:16px">يتم إنشاء قيد كمسودة بانتظار مراجعة المحاسب وترحيله.</div>'
-    +'<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:#666">بند المصروف *</label><select id="exp-acct" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px">'+expOpts+'</select></div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
-      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">المبلغ *</label><input id="exp-amt" type="number" placeholder="0" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-top:4px"></div>'
-      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">مدفوع من *</label><select id="exp-pay" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px">'+payOpts+'</select></div>'
+    +'<div style="font-size:12px;color:#888;margin-bottom:16px">يمكنك إضافة أكثر من بند في نفس القيد. يُحفظ كمسودة بانتظار مراجعة المحاسب.</div>'
+    +'<table style="width:100%;border-collapse:collapse;margin-bottom:8px"><thead><tr style="background:#f7f6f1"><th style="padding:6px 8px;text-align:right;font-size:12px;color:#666">بند المصروف</th><th style="padding:6px 8px;font-size:12px;color:#666">المبلغ</th><th></th></tr></thead>'
+      +'<tbody>'+rows+'</tbody>'
+      +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td style="padding:8px;text-align:left">الإجمالي</td><td style="padding:8px;text-align:center;color:#0F6E56"><span id="exp-total">'+(Math.round(tot*100)/100).toLocaleString()+'</span></td><td></td></tr></tfoot>'
+    +'</table>'
+    +'<button onclick="expAddLine()" style="background:#F4EFE2;color:#854F0B;border:none;border-radius:8px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:14px">+ إضافة بند</button>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'
+      +'<div style="flex:1;min-width:150px"><label style="font-size:12px;font-weight:700;color:#666">مدفوع من *</label><select id="exp-pay" onchange="window._expPay=this.value" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px">'+payOpts+'</select></div>'
+      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">التاريخ</label><input id="exp-date" type="date" value="'+window._expDate+'" onchange="window._expDate=this.value" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
     +'</div>'
-    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
-      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">التاريخ</label><input id="exp-date" type="date" value="'+today+'" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
-      +'<div style="flex:2;min-width:180px"><label style="font-size:12px;font-weight:700;color:#666">البيان</label><input id="exp-desc" placeholder="وصف المصروف" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
-    +'</div>'
+    +'<div style="margin-bottom:14px"><label style="font-size:12px;font-weight:700;color:#666">البيان</label><input id="exp-desc" placeholder="وصف المصروف (اختياري)" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
     +'<button onclick="saveExpense()" style="background:#0F6E56;color:#fff;border:none;border-radius:8px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;width:100%">حفظ كمسودة</button>'
-    +'<div id="exp-preview" style="background:#f7f6f1;border-radius:8px;padding:10px 12px;font-size:12px;color:#555;margin-top:12px;line-height:1.9">'
-      +'📋 <b>القيد المتوقع:</b><br>من ح/ بند المصروف (مدين)<br>إلى ح/ النقدية أو البنك (دائن)</div>'
   +'</div>';
 }
 async function saveExpense(){
   if(!coaCanAccess()){toast('غير مسموح',true);return;}
-  var acct=document.getElementById('exp-acct').value;
   var pay=document.getElementById('exp-pay').value;
-  var amt=parseFloat(document.getElementById('exp-amt').value)||0;
   var date=document.getElementById('exp-date').value||new Date().toISOString().slice(0,10);
   var desc=document.getElementById('exp-desc').value.trim();
-  if(!acct){toast('اختر بند المصروف',true);return;}
+  var lines=EXP_LINES.filter(function(l){return l.code&&(parseFloat(l.amt)||0)>0;});
   if(!pay){toast('اختر مصدر الدفع',true);return;}
-  if(amt<=0){toast('اكتب مبلغاً صحيحاً',true);return;}
+  if(!lines.length){toast('أضف بند مصروف واحد على الأقل بمبلغ',true);return;}
+  var tot=lines.reduce(function(s,l){return s+(parseFloat(l.amt)||0);},0);
   // next entry number
   var jr=await db.from('fin_journal').select('entry_num').order('created_at',{ascending:false}).limit(1);
   var lastN=0;(jr.data||[]).forEach(function(j){var n=parseInt((j.entry_num||'0').replace(/[^0-9]/g,''))||0;if(n>lastN)lastN=n;});
   var enum_='JV-'+String(lastN+1).padStart(5,'0');
-  var acctName=(COA.find(function(a){return a.code===acct;})||{}).name||'';
-  var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:desc||('مصروف: '+acctName),source:'expense',total_debit:amt,total_credit:amt,posted:false,created_by:CU.full_name||CU.username}).select().single();
+  var defDesc=desc||('مصروفات: '+lines.map(function(l){return (COA.find(function(a){return a.code===l.code;})||{}).name||'';}).join('، '));
+  var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:defDesc,source:'expense',total_debit:tot,total_credit:tot,posted:false,created_by:CU.full_name||CU.username}).select().single();
   if(ins.error){toast('خطأ: '+ins.error.message,true);return;}
-  var li=await db.from('fin_journal_lines').insert([
-    {journal_id:ins.data.id,account_code:acct,debit:amt,credit:0,note:'مصروف'},
-    {journal_id:ins.data.id,account_code:pay,debit:0,credit:amt,note:'سداد نقدي/بنكي'}
-  ]);
+  var payload=lines.map(function(l){return {journal_id:ins.data.id,account_code:l.code,debit:parseFloat(l.amt)||0,credit:0,note:'مصروف'};});
+  payload.push({journal_id:ins.data.id,account_code:pay,debit:0,credit:tot,note:'سداد نقدي/بنكي'});
+  var li=await db.from('fin_journal_lines').insert(payload);
   if(li.error){toast('خطأ في السطور: '+li.error.message,true);return;}
-  toast('تم حفظ المصروف كمسودة '+enum_+' — بانتظار الترحيل');
+  toast('تم حفظ '+lines.length+' بند كمسودة '+enum_+' — بانتظار الترحيل');
+  EXP_LINES=[{code:'',amt:''},{code:'',amt:''}];window._expDate='';
   loadExpenseForm();
 }
 
@@ -5170,6 +5201,88 @@ async function deleteDraft(id){
   toast('تم الحذف');loadReviewDrafts();
 }
 // ── END EXPENSE & REVIEW ──────────────────────────────────────
+
+// ── CUSTOMER PAYMENTS → DRAFT JOURNALS (ربط دفعات العملاء) ─────
+// map task type to a revenue account code
+function cpRevenueFor(type){
+  var m={
+    'maintenance':'41201',  // إيراد صيانة
+    'installation':'41202',  // إيراد تركيبات
+    'uninstall':'41203','uninstall_install':'41203','pull':'41203', // فك وتركيب
+    'sales':'41101',         // مبيعات أجهزة
+    'بيع مباشر':'41101',
+    'inspection':'41201'     // كشف/صيانة
+  };
+  return m[type]||'41201';
+}
+var CP_PAYS=[];
+async function loadCustomerPaymentLink(){
+  var body=document.getElementById('cp-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  body.innerHTML='<div style="padding:20px;text-align:center;color:#888">جاري التحميل...</div>';
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  // payments (approved) joined to task type/customer
+  var pr=await db.from('payments').select('id,amount,method,created_at,tasks!inner(task_num,type,customer_name)').limit(5000);
+  var pays=(pr.data||[]).filter(function(p){return p.amount>0;});
+  // which payments already linked (journal source_id)
+  var jr=await db.from('fin_journal').select('source_id').eq('source','customer_payment');
+  var linked={};(jr.data||[]).forEach(function(j){if(j.source_id)linked[j.source_id]=true;});
+  CP_PAYS=pays.filter(function(p){return !linked[p.id];});
+  renderCPLink(linked);
+}
+function renderCPLink(linked){
+  var body=document.getElementById('cp-body');if(!body)return;
+  var byCode={};COA.forEach(function(a){byCode[a.code]=a;});
+  var TY={maintenance:'صيانة',installation:'تركيب',sales:'بيع',uninstall:'فك','uninstall_install':'فك وتركيب',pull:'سحب',inspection:'معاينة','بيع مباشر':'بيع مباشر'};
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString();};
+  var rows=CP_PAYS.map(function(p){
+    var t=p.tasks||{};var rev=cpRevenueFor(t.type);
+    return '<tr style="border-bottom:1px solid #f0efe8">'
+      +'<td style="padding:8px 10px;font-family:monospace;font-size:12px;color:#185FA5">'+(t.task_num||'')+'</td>'
+      +'<td style="padding:8px 10px;font-size:12px">'+(t.customer_name||'')+'</td>'
+      +'<td style="padding:8px 10px;font-size:12px">'+(TY[t.type]||t.type||'')+'</td>'
+      +'<td style="padding:8px 10px;text-align:center;font-weight:600">'+fmt(p.amount)+'</td>'
+      +'<td style="padding:8px 10px;font-size:11px;color:#666">'+rev+' · '+((byCode[rev]||{}).name||'')+'</td>'
+    +'</tr>';
+  }).join('');
+  var tot=CP_PAYS.reduce(function(s,p){return s+(parseFloat(p.amount)||0);},0);
+  var html='<div class="cd" style="padding:20px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:6px">'
+      +'<div style="font-size:16px;font-weight:800">💳 ربط دفعات العملاء بالمحاسبة <span style="font-size:12px;color:#888;font-weight:400">('+CP_PAYS.length+' غير مرحّلة)</span></div>'
+      +(CP_PAYS.length?'<button onclick="cpPostAll()" style="background:#0F6E56;color:#fff;border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer">رحّل الكل كمسوّدات</button>':'')
+    +'</div>'
+    +'<div style="font-size:12px;color:#888;margin-bottom:14px">كل دفعة يتولّد لها قيد مسودة (مدين الخزينة / دائن حساب الإيراد حسب نوع المهمة). المحاسب يراجعها ويرحّلها من شاشة «مراجعة وترحيل».</div>'
+    +(CP_PAYS.length
+      ?'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:600px"><thead><tr style="background:#f7f6f1"><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">المهمة</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">العميل</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">النوع</th><th style="padding:8px 10px;font-size:12px;color:#666">المبلغ</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">حساب الإيراد</th></tr></thead><tbody>'+rows+'</tbody>'
+        +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td colspan="3" style="padding:9px 10px;text-align:left">الإجمالي</td><td style="padding:9px 10px;text-align:center;color:#0F6E56">'+fmt(tot)+'</td><td></td></tr></tfoot></table></div>'
+      :'<div style="text-align:center;padding:30px;color:#aaa">🎉 كل الدفعات مرحّلة للمحاسبة</div>')
+  +'</div>';
+  body.innerHTML=html;
+}
+async function cpPostAll(){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  if(!CP_PAYS.length)return;
+  if(!confirm('سيتم إنشاء '+CP_PAYS.length+' قيد مسودة لدفعات العملاء. متابعة؟'))return;
+  // get starting entry number once
+  var jr=await db.from('fin_journal').select('entry_num').order('created_at',{ascending:false}).limit(1);
+  var lastN=0;(jr.data||[]).forEach(function(j){var n=parseInt((j.entry_num||'0').replace(/[^0-9]/g,''))||0;if(n>lastN)lastN=n;});
+  var ok=0,fail=0;
+  for(var i=0;i<CP_PAYS.length;i++){
+    var p=CP_PAYS[i];var t=p.tasks||{};var rev=cpRevenueFor(t.type);var amt=parseFloat(p.amount)||0;
+    lastN++;var enum_='JV-'+String(lastN).padStart(5,'0');
+    var date=(p.created_at||'').slice(0,10)||new Date().toISOString().slice(0,10);
+    var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:'تحصيل من '+(t.customer_name||'عميل')+' - مهمة '+(t.task_num||''),source:'customer_payment',source_id:p.id,total_debit:amt,total_credit:amt,posted:false,created_by:CU.full_name||CU.username}).select().single();
+    if(ins.error){fail++;continue;}
+    var li=await db.from('fin_journal_lines').insert([
+      {journal_id:ins.data.id,account_code:'131',debit:amt,credit:0,note:'تحصيل نقدي'},
+      {journal_id:ins.data.id,account_code:rev,debit:0,credit:amt,note:'إيراد'}
+    ]);
+    if(li.error){fail++;}else{ok++;}
+  }
+  toast('تم إنشاء '+ok+' مسودة'+(fail?(' · فشل '+fail):''));
+  loadCustomerPaymentLink();
+}
+// ── END CUSTOMER PAYMENTS LINK ────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){

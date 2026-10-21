@@ -5164,6 +5164,7 @@ async function loadReviewDrafts(){
     var lr=await db.from('fin_journal_lines').select('*').in('journal_id',ids);
     (lr.data||[]).forEach(function(l){if(!linesMap[l.journal_id])linesMap[l.journal_id]=[];linesMap[l.journal_id].push(l);});
   }
+  window._draftsMap={};drafts.forEach(function(d){window._draftsMap[d.id]={head:d,lines:linesMap[d.id]||[]};});
   var cards=drafts.map(function(d){
     var ls=(linesMap[d.id]||[]).map(function(l){
       return '<tr><td style="padding:4px 8px;font-size:12px">'+l.account_code+' · '+((byCode[l.account_code]||{}).name||'')+'</td><td style="padding:4px 8px;text-align:center;color:#0F6E56;font-size:12px">'+(l.debit>0?fmt(l.debit):'—')+'</td><td style="padding:4px 8px;text-align:center;color:#A32D2D;font-size:12px">'+(l.credit>0?fmt(l.credit):'—')+'</td></tr>';
@@ -5176,6 +5177,7 @@ async function loadReviewDrafts(){
       +'<table style="width:100%;border-collapse:collapse;background:#faf9f5;border-radius:6px"><thead><tr><th style="padding:4px 8px;text-align:right;font-size:11px;color:#888">الحساب</th><th style="padding:4px 8px;font-size:11px;color:#888">مدين</th><th style="padding:4px 8px;font-size:11px;color:#888">دائن</th></tr></thead><tbody>'+ls+'</tbody></table>'
       +'<div style="display:flex;gap:8px;margin-top:10px">'
         +'<button onclick="postDraft(\''+d.id+'\')" style="background:#0F6E56;color:#fff;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">✓ ترحيل</button>'
+        +'<button onclick="editDraft(\''+d.id+'\')" style="background:#E3EEF9;color:#185FA5;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">✎ تعديل</button>'
         +'<button onclick="deleteDraft(\''+d.id+'\')" style="background:#FCEBEB;color:#A32D2D;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">حذف</button>'
       +'</div>'
     +'</div>';
@@ -5199,6 +5201,88 @@ async function deleteDraft(id){
   await db.from('fin_journal_lines').delete().eq('journal_id',id);
   await db.from('fin_journal').delete().eq('id',id);
   toast('تم الحذف');loadReviewDrafts();
+}
+// ---- edit a draft (all accounts allowed since accountant reviews) ----
+var _editDraft={id:null,date:'',desc:'',lines:[]};
+function dftAcctOptions(selected){
+  var o='';
+  COA.filter(function(a){return a.is_postable;}).forEach(function(a){
+    o+='<option value="'+a.code+'"'+(selected===a.code?' selected':'')+'>'+a.code+' · '+a.name+'</option>';
+  });
+  return o;
+}
+function editDraft(id){
+  var d=(window._draftsMap||{})[id];if(!d)return;
+  _editDraft={id:id,date:d.head.entry_date||'',desc:d.head.description||'',
+    lines:d.lines.map(function(l){return {code:l.account_code,debit:(parseFloat(l.debit)||0)||'',credit:(parseFloat(l.credit)||0)||''};})};
+  renderEditDraft();
+}
+function edtLineAdd(){_editDraft.lines.push({code:'',debit:'',credit:''});renderEditDraft();}
+function edtLineRemove(i){_editDraft.lines.splice(i,1);if(_editDraft.lines.length<2)_editDraft.lines.push({code:'',debit:'',credit:''});renderEditDraft();}
+function edtLineEdit(i,f,v){
+  _editDraft.lines[i][f]=v;
+  if(f==='code'){renderEditDraft();return;}
+  if(f==='debit'&&v){_editDraft.lines[i].credit='';var ce=document.getElementById('edt-cr-'+i);if(ce)ce.value='';}
+  if(f==='credit'&&v){_editDraft.lines[i].debit='';var de=document.getElementById('edt-db-'+i);if(de)de.value='';}
+  edtUpdateTotals();
+}
+function edtUpdateTotals(){
+  var d=_editDraft.lines.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var c=_editDraft.lines.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  var bal=Math.abs(d-c)<0.01&&d>0;
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString();};
+  var td=document.getElementById('edt-td');if(td)td.textContent=fmt(d);
+  var tc=document.getElementById('edt-tc');if(tc)tc.textContent=fmt(c);
+  var ind=document.getElementById('edt-ind');if(ind){ind.textContent=bal?'✅ متوازن':'⚠️ غير متوازن';ind.style.color=bal?'#0F6E56':'#A32D2D';}
+  var sv=document.getElementById('edt-save');if(sv){sv.disabled=!bal;sv.style.background=bal?'#0F6E56':'#ccc';sv.style.cursor=bal?'pointer':'not-allowed';}
+}
+function renderEditDraft(){
+  var totD=_editDraft.lines.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var totC=_editDraft.lines.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  var bal=Math.abs(totD-totC)<0.01&&totD>0;
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString();};
+  var rows=_editDraft.lines.map(function(l,i){
+    return '<tr>'
+      +'<td style="padding:4px"><select onchange="edtLineEdit('+i+',\'code\',this.value)" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px">'+'<option value="">— حساب —</option>'+dftAcctOptions(l.code)+'</select></td>'
+      +'<td style="padding:4px;width:95px"><input id="edt-db-'+i+'" type="number" value="'+(l.debit||'')+'" oninput="edtLineEdit('+i+',\'debit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"></td>'
+      +'<td style="padding:4px;width:95px"><input id="edt-cr-'+i+'" type="number" value="'+(l.credit||'')+'" oninput="edtLineEdit('+i+',\'credit\',this.value)" placeholder="0" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"></td>'
+      +'<td style="padding:4px;width:28px;text-align:center"><span onclick="edtLineRemove('+i+')" style="color:#ccc;cursor:pointer">✕</span></td>'
+    +'</tr>';
+  }).join('');
+  var ov=document.getElementById('edt-ov');if(ov)ov.remove();
+  var html='<div id="edt-ov" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px">'
+    +'<div style="background:#fff;border-radius:14px;max-width:560px;width:100%;padding:20px;max-height:88vh;overflow:auto">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:16px;font-weight:800">✎ تعديل المسودة</div>'
+        +'<button onclick="document.getElementById(\'edt-ov\').remove()" style="background:#eee;border:none;border-radius:8px;width:30px;height:30px;font-size:16px;cursor:pointer">×</button></div>'
+      +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
+        +'<div style="flex:0 0 150px"><label style="font-size:12px;color:#666">التاريخ</label><input id="edt-date" type="date" value="'+_editDraft.date+'" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:12px;margin-top:3px"></div>'
+        +'<div style="flex:1;min-width:160px"><label style="font-size:12px;color:#666">البيان</label><input id="edt-desc" value="'+(_editDraft.desc||'').replace(/"/g,'&quot;')+'" style="width:100%;padding:7px;border:1px solid #ddd;border-radius:7px;font-size:12px;margin-top:3px"></div>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#f7f6f1"><th style="padding:5px;text-align:right;font-size:11px;color:#666">الحساب</th><th style="padding:5px;font-size:11px;color:#666">مدين</th><th style="padding:5px;font-size:11px;color:#666">دائن</th><th></th></tr></thead>'
+        +'<tbody>'+rows+'</tbody>'
+        +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td style="padding:6px;text-align:left;font-size:12px">الإجمالي</td><td style="padding:6px;text-align:center;color:#0F6E56;font-size:12px"><span id="edt-td">'+fmt(totD)+'</span></td><td style="padding:6px;text-align:center;color:#A32D2D;font-size:12px"><span id="edt-tc">'+fmt(totC)+'</span></td><td></td></tr></tfoot>'
+      +'</table>'
+      +'<button onclick="edtLineAdd()" style="background:#F4EFE2;color:#854F0B;border:none;border-radius:7px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;margin-top:8px">+ سطر</button>'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;margin-top:14px"><span id="edt-ind" style="font-size:12px;font-weight:700;color:'+(bal?'#0F6E56':'#A32D2D')+'">'+(bal?'✅ متوازن':'⚠️ غير متوازن')+'</span>'
+        +'<button id="edt-save" onclick="saveDraftEdit()" '+(bal?'':'disabled')+' style="background:'+(bal?'#0F6E56':'#ccc')+';color:#fff;border:none;border-radius:8px;padding:9px 22px;font-size:13px;font-weight:700;cursor:'+(bal?'pointer':'not-allowed')+'">حفظ التعديل</button></div>'
+    +'</div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+}
+async function saveDraftEdit(){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  var date=document.getElementById('edt-date').value||_editDraft.date;
+  var desc=document.getElementById('edt-desc').value.trim();
+  var lines=_editDraft.lines.filter(function(l){return l.code&&((parseFloat(l.debit)||0)>0||(parseFloat(l.credit)||0)>0);});
+  if(lines.length<2){toast('القيد يحتاج سطرين على الأقل',true);return;}
+  var td=lines.reduce(function(s,l){return s+(parseFloat(l.debit)||0);},0);
+  var tc=lines.reduce(function(s,l){return s+(parseFloat(l.credit)||0);},0);
+  if(Math.abs(td-tc)>=0.01){toast('القيد غير متوازن',true);return;}
+  // replace lines + update head
+  await db.from('fin_journal_lines').delete().eq('journal_id',_editDraft.id);
+  await db.from('fin_journal_lines').insert(lines.map(function(l){return {journal_id:_editDraft.id,account_code:l.code,debit:parseFloat(l.debit)||0,credit:parseFloat(l.credit)||0};}));
+  await db.from('fin_journal').update({entry_date:date,description:desc||null,total_debit:td,total_credit:tc}).eq('id',_editDraft.id);
+  var ov=document.getElementById('edt-ov');if(ov)ov.remove();
+  toast('تم حفظ التعديل');loadReviewDrafts();
 }
 // ── END EXPENSE & REVIEW ──────────────────────────────────────
 
@@ -5243,6 +5327,7 @@ function renderCPLink(linked){
       +'<td style="padding:8px 10px;font-size:12px">'+(TY[t.type]||t.type||'')+'</td>'
       +'<td style="padding:8px 10px;text-align:center;font-weight:600">'+fmt(p.amount)+'</td>'
       +'<td style="padding:8px 10px;font-size:11px;color:#666">'+rev+' · '+((byCode[rev]||{}).name||'')+'</td>'
+      +'<td style="padding:8px 10px;text-align:center"><button onclick="cpPostOne(\''+p.id+'\')" style="background:#0F6E56;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">رحّل</button></td>'
     +'</tr>';
   }).join('');
   var tot=CP_PAYS.reduce(function(s,p){return s+(parseFloat(p.amount)||0);},0);
@@ -5253,11 +5338,32 @@ function renderCPLink(linked){
     +'</div>'
     +'<div style="font-size:12px;color:#888;margin-bottom:14px">كل دفعة يتولّد لها قيد مسودة (مدين الخزينة / دائن حساب الإيراد حسب نوع المهمة). المحاسب يراجعها ويرحّلها من شاشة «مراجعة وترحيل».</div>'
     +(CP_PAYS.length
-      ?'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:600px"><thead><tr style="background:#f7f6f1"><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">المهمة</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">العميل</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">النوع</th><th style="padding:8px 10px;font-size:12px;color:#666">المبلغ</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">حساب الإيراد</th></tr></thead><tbody>'+rows+'</tbody>'
-        +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td colspan="3" style="padding:9px 10px;text-align:left">الإجمالي</td><td style="padding:9px 10px;text-align:center;color:#0F6E56">'+fmt(tot)+'</td><td></td></tr></tfoot></table></div>'
+      ?'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:640px"><thead><tr style="background:#f7f6f1"><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">المهمة</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">العميل</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">النوع</th><th style="padding:8px 10px;font-size:12px;color:#666">المبلغ</th><th style="padding:8px 10px;text-align:right;font-size:12px;color:#666">حساب الإيراد</th><th style="padding:8px 10px;font-size:12px;color:#666"></th></tr></thead><tbody>'+rows+'</tbody>'
+        +'<tfoot><tr style="background:#faf9f5;font-weight:800"><td colspan="3" style="padding:9px 10px;text-align:left">الإجمالي</td><td style="padding:9px 10px;text-align:center;color:#0F6E56">'+fmt(tot)+'</td><td colspan="2"></td></tr></tfoot></table></div>'
       :'<div style="text-align:center;padding:30px;color:#aaa">🎉 كل الدفعات مرحّلة للمحاسبة</div>')
   +'</div>';
   body.innerHTML=html;
+}
+async function cpPostOnePayment(p){
+  var t=p.tasks||{};var rev=cpRevenueFor(t.type);var amt=parseFloat(p.amount)||0;
+  var jr=await db.from('fin_journal').select('entry_num').order('created_at',{ascending:false}).limit(1);
+  var lastN=0;(jr.data||[]).forEach(function(j){var n=parseInt((j.entry_num||'0').replace(/[^0-9]/g,''))||0;if(n>lastN)lastN=n;});
+  var enum_='JV-'+String(lastN+1).padStart(5,'0');
+  var date=(p.created_at||'').slice(0,10)||new Date().toISOString().slice(0,10);
+  var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:'تحصيل من '+(t.customer_name||'عميل')+' - مهمة '+(t.task_num||''),source:'customer_payment',source_id:p.id,total_debit:amt,total_credit:amt,posted:false,created_by:CU.full_name||CU.username}).select().single();
+  if(ins.error)return false;
+  var li=await db.from('fin_journal_lines').insert([
+    {journal_id:ins.data.id,account_code:'131',debit:amt,credit:0,note:'تحصيل نقدي'},
+    {journal_id:ins.data.id,account_code:rev,debit:0,credit:amt,note:'إيراد'}
+  ]);
+  return !li.error;
+}
+async function cpPostOne(payId){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  var p=CP_PAYS.find(function(x){return x.id===payId;});if(!p)return;
+  var ok=await cpPostOnePayment(p);
+  toast(ok?'تم إنشاء مسودة للدفعة':'خطأ في الإنشاء',!ok);
+  loadCustomerPaymentLink();
 }
 async function cpPostAll(){
   if(!coaCanAccess()){toast('غير مسموح',true);return;}

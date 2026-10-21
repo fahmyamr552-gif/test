@@ -4647,8 +4647,9 @@ function renderCOA(){
   var body=document.getElementById('coa-body');if(!body)return;
   var roots=COA.filter(function(a){return !a.parent_code;});
   var typeBadge=function(a){
-    if(a.acct_type==='asset')return '<span style="background:#EAF3DE;color:#0F6E56;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">أصل</span>';
-    return '<span style="background:#FAEEDA;color:#854F0B;border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">خصم/حق ملكية</span>';
+    var m={asset:['أصل','#EAF3DE','#0F6E56'],liability_equity:['خصم/حق ملكية','#FAEEDA','#854F0B'],revenue:['إيراد','#E3EEF9','#185FA5'],expense:['مصروف','#FCEBEB','#A32D2D']};
+    var x=m[a.acct_type]||m.liability_equity;
+    return '<span style="background:'+x[1]+';color:'+x[2]+';border-radius:5px;padding:1px 7px;font-size:10px;font-weight:700">'+x[0]+'</span>';
   };
   var rowHtml=function(a,depth){
     var kids=coaChildren(a.code);

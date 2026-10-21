@@ -221,6 +221,8 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
     <div class="ni" id="ni-pur" onclick="go('pur',this)">&#9632; <span data-t="purchases">Purchases</span></div>
     <div class="ni" id="ni-fin" onclick="go('fin',this)">&#9632; <span data-t="finance">Finance</span></div>
     <div class="ni" id="ni-coa" onclick="go('coa',this)">&#9632; <span>شجرة الحسابات</span></div>
+    <div class="ni" id="ni-exp" onclick="go('exp',this)">&#9632; <span>تسجيل مصروف</span></div>
+    <div class="ni" id="ni-rev" onclick="go('rev',this)">&#9632; <span>مراجعة وترحيل</span></div>
     <div class="ni" id="ni-jv" onclick="go('jv',this)">&#9632; <span>القيود اليومية</span></div>
     <div class="ni" id="ni-tb" onclick="go('tb',this)">&#9632; <span>ميزان المراجعة</span></div>
     <div class="ni" id="ni-gl" onclick="go('gl',this)">&#9632; <span>حساب الأستاذ</span></div>
@@ -1036,6 +1038,14 @@ tr.hv:hover td{background:#f5f5f0;cursor:pointer}
   <div id="coa-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
 
+<div class="pg" id="pg-exp">
+  <div id="exp-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
+<div class="pg" id="pg-rev">
+  <div id="rev-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
+</div>
+
 <div class="pg" id="pg-jv">
   <div id="jv-body"><div style="padding:20px;text-align:center;color:#888">Loading...</div></div>
 </div>
@@ -1288,7 +1298,7 @@ function go(pg,el){
   const pge=document.getElementById('pg-'+pg);
   if(pge)pge.classList.add('on');
   if(el)el.classList.add('on');
-  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية',gl:'حساب الأستاذ'};
+  const titlesMap={dash:'dashboard',tasks:'tasks',inv:'inventory','np':'addproduct',pur:'purchases','npo':'newpo',fin:'finance',cust:'customers','cd':'customer',sup:'suppliers','sd':'supplier',usr:'users',disp:'dispatches','nt':'newtask','td':'tasks',plan:'خطة يومية',fb:'آراء العملاء',fu:'الاستكمالات',ds:'أوامر الصرف',rep:'التقرير اليومي',ded:'الخصومات',mydash:'لوحتي',pay:'الرواتب',att:'الحضور',ct:'عقود الصيانة',bk:'طلبات الحجز',coa:'شجرة الحسابات',tb:'ميزان المراجعة',jv:'القيود اليومية',gl:'حساب الأستاذ',exp:'تسجيل مصروف',rev:'مراجعة وترحيل'};
   const titles={}; Object.entries(titlesMap).forEach(([k,v])=>titles[k]=t(v));
   document.getElementById('ptitle').textContent=titles[pg]||pg;
   const ta=document.getElementById('tact');ta.innerHTML='';
@@ -1305,6 +1315,8 @@ function go(pg,el){
   if(pg==='jv')loadJournal();
   if(pg==='tb')loadTrialBalance();
   if(pg==='gl')loadLedger();
+  if(pg==='exp')loadExpenseForm();
+  if(pg==='rev')loadReviewDrafts();
   if(pg==='cust')loadCust();
   if(pg==='sup')loadSup();
   if(pg==='disp'){
@@ -5044,6 +5056,120 @@ function printLedger(){
   w.document.close();
 }
 // ── END GENERAL LEDGER ────────────────────────────────────────
+
+// ── EXPENSE ENTRY (تسجيل مصروف) → creates a DRAFT journal entry ──
+async function loadExpenseForm(){
+  var body=document.getElementById('exp-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  // expense accounts (postable, type expense)
+  var expOpts='<option value="">— اختر بند المصروف —</option>';
+  COA.filter(function(a){return a.is_postable&&a.acct_type==='expense';}).forEach(function(a){
+    expOpts+='<option value="'+a.code+'">'+a.code+' · '+a.name+'</option>';
+  });
+  // paid-from: cash (الخزينة 131) + bank accounts (postable, codes under 132) + any postable asset cash-like
+  var payOpts='';
+  COA.filter(function(a){return a.is_postable&&(a.code==='131'||a.parent_code==='132'||a.code==='133');}).forEach(function(a){
+    payOpts+='<option value="'+a.code+'"'+(a.code==='131'?' selected':'')+'>'+a.name+'</option>';
+  });
+  var today=new Date().toISOString().slice(0,10);
+  body.innerHTML='<div class="cd" style="padding:20px;max-width:560px">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">🧾 تسجيل مصروف</div>'
+    +'<div style="font-size:12px;color:#888;margin-bottom:16px">يتم إنشاء قيد كمسودة بانتظار مراجعة المحاسب وترحيله.</div>'
+    +'<div style="margin-bottom:12px"><label style="font-size:12px;font-weight:700;color:#666">بند المصروف *</label><select id="exp-acct" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px">'+expOpts+'</select></div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">المبلغ *</label><input id="exp-amt" type="number" placeholder="0" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:14px;margin-top:4px"></div>'
+      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">مدفوع من *</label><select id="exp-pay" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px">'+payOpts+'</select></div>'
+    +'</div>'
+    +'<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">'
+      +'<div style="flex:1;min-width:140px"><label style="font-size:12px;font-weight:700;color:#666">التاريخ</label><input id="exp-date" type="date" value="'+today+'" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
+      +'<div style="flex:2;min-width:180px"><label style="font-size:12px;font-weight:700;color:#666">البيان</label><input id="exp-desc" placeholder="وصف المصروف" style="width:100%;padding:9px;border:1px solid #ddd;border-radius:8px;font-size:13px;margin-top:4px"></div>'
+    +'</div>'
+    +'<button onclick="saveExpense()" style="background:#0F6E56;color:#fff;border:none;border-radius:8px;padding:11px;font-size:14px;font-weight:700;cursor:pointer;width:100%">حفظ كمسودة</button>'
+    +'<div id="exp-preview" style="background:#f7f6f1;border-radius:8px;padding:10px 12px;font-size:12px;color:#555;margin-top:12px;line-height:1.9">'
+      +'📋 <b>القيد المتوقع:</b><br>من ح/ بند المصروف (مدين)<br>إلى ح/ النقدية أو البنك (دائن)</div>'
+  +'</div>';
+}
+async function saveExpense(){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  var acct=document.getElementById('exp-acct').value;
+  var pay=document.getElementById('exp-pay').value;
+  var amt=parseFloat(document.getElementById('exp-amt').value)||0;
+  var date=document.getElementById('exp-date').value||new Date().toISOString().slice(0,10);
+  var desc=document.getElementById('exp-desc').value.trim();
+  if(!acct){toast('اختر بند المصروف',true);return;}
+  if(!pay){toast('اختر مصدر الدفع',true);return;}
+  if(amt<=0){toast('اكتب مبلغاً صحيحاً',true);return;}
+  // next entry number
+  var jr=await db.from('fin_journal').select('entry_num').order('created_at',{ascending:false}).limit(1);
+  var lastN=0;(jr.data||[]).forEach(function(j){var n=parseInt((j.entry_num||'0').replace(/[^0-9]/g,''))||0;if(n>lastN)lastN=n;});
+  var enum_='JV-'+String(lastN+1).padStart(5,'0');
+  var acctName=(COA.find(function(a){return a.code===acct;})||{}).name||'';
+  var ins=await db.from('fin_journal').insert({entry_num:enum_,entry_date:date,description:desc||('مصروف: '+acctName),source:'expense',total_debit:amt,total_credit:amt,posted:false,created_by:CU.full_name||CU.username}).select().single();
+  if(ins.error){toast('خطأ: '+ins.error.message,true);return;}
+  var li=await db.from('fin_journal_lines').insert([
+    {journal_id:ins.data.id,account_code:acct,debit:amt,credit:0,note:'مصروف'},
+    {journal_id:ins.data.id,account_code:pay,debit:0,credit:amt,note:'سداد نقدي/بنكي'}
+  ]);
+  if(li.error){toast('خطأ في السطور: '+li.error.message,true);return;}
+  toast('تم حفظ المصروف كمسودة '+enum_+' — بانتظار الترحيل');
+  loadExpenseForm();
+}
+
+// ── REVIEW & POST DRAFTS (مراجعة وترحيل) ───────────────────────
+async function loadReviewDrafts(){
+  var body=document.getElementById('rev-body');if(!body)return;
+  if(!coaCanAccess()){body.innerHTML='<div class="cd" style="padding:30px;text-align:center;color:#A32D2D">غير مسموح</div>';return;}
+  body.innerHTML='<div style="padding:20px;text-align:center;color:#888">جاري التحميل...</div>';
+  if(!COA.length){try{var r=await db.from('fin_accounts').select('*').eq('active',true).order('code');COA=r.data||[];}catch(e){COA=[];}}
+  var dr=await db.from('fin_journal').select('*').eq('posted',false).order('created_at',{ascending:false}).limit(500);
+  var drafts=dr.data||[];
+  // fetch lines for all drafts
+  var byCode={};COA.forEach(function(a){byCode[a.code]=a;});
+  var fmt=function(n){return (Math.round((n||0)*100)/100).toLocaleString();};
+  var linesMap={};
+  if(drafts.length){
+    var ids=drafts.map(function(d){return d.id;});
+    var lr=await db.from('fin_journal_lines').select('*').in('journal_id',ids);
+    (lr.data||[]).forEach(function(l){if(!linesMap[l.journal_id])linesMap[l.journal_id]=[];linesMap[l.journal_id].push(l);});
+  }
+  var cards=drafts.map(function(d){
+    var ls=(linesMap[d.id]||[]).map(function(l){
+      return '<tr><td style="padding:4px 8px;font-size:12px">'+l.account_code+' · '+((byCode[l.account_code]||{}).name||'')+'</td><td style="padding:4px 8px;text-align:center;color:#0F6E56;font-size:12px">'+(l.debit>0?fmt(l.debit):'—')+'</td><td style="padding:4px 8px;text-align:center;color:#A32D2D;font-size:12px">'+(l.credit>0?fmt(l.credit):'—')+'</td></tr>';
+    }).join('');
+    return '<div style="border:1px solid #e8e6e0;border-radius:10px;padding:14px;margin-bottom:10px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">'
+        +'<div><span style="font-family:monospace;font-size:12px;color:#185FA5;font-weight:700">'+(d.entry_num||'')+'</span> <span style="font-size:12px;color:#888">'+(d.entry_date||'')+'</span><div style="font-size:13px;margin-top:2px">'+(d.description||'')+'</div></div>'
+        +'<span style="background:#FAEEDA;color:#854F0B;border-radius:6px;padding:2px 10px;font-size:11px;font-weight:700">مسودة</span>'
+      +'</div>'
+      +'<table style="width:100%;border-collapse:collapse;background:#faf9f5;border-radius:6px"><thead><tr><th style="padding:4px 8px;text-align:right;font-size:11px;color:#888">الحساب</th><th style="padding:4px 8px;font-size:11px;color:#888">مدين</th><th style="padding:4px 8px;font-size:11px;color:#888">دائن</th></tr></thead><tbody>'+ls+'</tbody></table>'
+      +'<div style="display:flex;gap:8px;margin-top:10px">'
+        +'<button onclick="postDraft(\''+d.id+'\')" style="background:#0F6E56;color:#fff;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">✓ ترحيل</button>'
+        +'<button onclick="deleteDraft(\''+d.id+'\')" style="background:#FCEBEB;color:#A32D2D;border:none;border-radius:7px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">حذف</button>'
+      +'</div>'
+    +'</div>';
+  }).join('');
+  var html='<div class="cd" style="padding:20px">'
+    +'<div style="font-size:16px;font-weight:800;margin-bottom:4px">📥 مراجعة وترحيل المسوّدات <span style="font-size:12px;color:#888;font-weight:400">('+drafts.length+')</span></div>'
+    +'<div style="font-size:12px;color:#888;margin-bottom:16px">القيود المعلّقة بانتظار المراجعة. الترحيل يدخلها الدفاتر وتظهر في الميزان وحساب الأستاذ.</div>'
+    +(drafts.length?cards:'<div style="text-align:center;padding:30px;color:#aaa">🎉 لا توجد مسوّدات معلّقة</div>')
+  +'</div>';
+  body.innerHTML=html;
+}
+async function postDraft(id){
+  if(!coaCanAccess()){toast('غير مسموح',true);return;}
+  var up=await db.from('fin_journal').update({posted:true}).eq('id',id);
+  if(up.error){toast('خطأ: '+up.error.message,true);return;}
+  toast('تم الترحيل ✓');loadReviewDrafts();
+}
+async function deleteDraft(id){
+  if(!CU||!['owner','admin','finance'].includes(CU.role)){toast('غير مسموح',true);return;}
+  if(!confirm('حذف هذه المسودة؟'))return;
+  await db.from('fin_journal_lines').delete().eq('journal_id',id);
+  await db.from('fin_journal').delete().eq('id',id);
+  toast('تم الحذف');loadReviewDrafts();
+}
+// ── END EXPENSE & REVIEW ──────────────────────────────────────
 
 var _invLoadToken=0;
 async function loadInv(search,brand){
